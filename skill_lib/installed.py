@@ -86,6 +86,22 @@ def _safe_scan_descriptions() -> dict[str, str]:
 
 
 def _walk_skill_dirs(home_wide: Path, profile_dir: Optional[Path]) -> dict[str, dict]:
+    """Enumerate `SKILL.md` files under the host-wide and per-profile
+    skill roots. Mirrors the legacy iOS heredoc's
+    `find -mindepth 2 -maxdepth 4 -name SKILL.md` exactly so the plugin
+    is a drop-in replacement.
+
+    Two scan strategies, tried in order, results merged:
+
+      1. ``Path.rglob`` — fast and idiomatic.
+      2. ``os.walk`` — symlink-following, depth-limited fallback.
+         Catches the cases where rglob silently skips (symlinked skill
+         dirs, filesystems where pathlib's stat gating differs, etc.)
+         that the heredoc's ``find`` picked up.
+
+    Per-profile entries shadow host-wide entries with the same name —
+    matches `HermesAdapter.listSkills`'s contract.
+    """
     out: dict[str, dict] = {}
     candidates: list[tuple[Path, str]] = []
     if home_wide.is_dir():
@@ -93,18 +109,45 @@ def _walk_skill_dirs(home_wide: Path, profile_dir: Optional[Path]) -> dict[str, 
     if profile_dir and profile_dir.is_dir():
         candidates.append((profile_dir, "profile"))
 
+    def _record(skill_md: Path, root: Path, scope: str) -> None:
+        try:
+            rel = skill_md.relative_to(root)
+        except ValueError:
+            return
+        # Heredoc's `-mindepth 2 -maxdepth 4` ⇒ rel.parts in 2..4.
+        if len(rel.parts) < 2 or len(rel.parts) > 4:
+            return
+        skill_dir = skill_md.parent
+        name = skill_dir.name
+        if not name or name.startswith("."):
+            return
+        if scope == "profile" or name not in out:
+            out[name] = {"path": str(skill_dir), "scope": scope}
+
     for root, scope in candidates:
+        # Strategy 1: pathlib rglob.
         try:
             for skill_md in root.rglob("SKILL.md"):
-                rel = skill_md.relative_to(root)
-                if len(rel.parts) > 4:
-                    continue
-                skill_dir = skill_md.parent
-                name = skill_dir.name
-                if not name:
-                    continue
-                if scope == "profile" or name not in out:
-                    out[name] = {"path": str(skill_dir), "scope": scope}
+                _record(skill_md, root, scope)
+        except OSError:
+            pass
+
+        # Strategy 2: os.walk fallback. Always runs, even when rglob
+        # succeeded — merges into the same dict, so duplicates are a
+        # no-op and missed-by-rglob skills are recovered.
+        try:
+            for dirpath, dirnames, filenames in os.walk(
+                str(root), followlinks=True
+            ):
+                # Don't descend past depth 4 (skill_dir + SKILL.md = 4 parts).
+                rel_dir = Path(dirpath).relative_to(root)
+                depth = 0 if str(rel_dir) == "." else len(rel_dir.parts)
+                if depth >= 4:
+                    dirnames[:] = []
+                # Prune hidden subdirs (`.hub/`, `.pytest_cache/`, …).
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                if "SKILL.md" in filenames:
+                    _record(Path(dirpath) / "SKILL.md", root, scope)
         except OSError:
             continue
     return out
