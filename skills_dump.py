@@ -13,7 +13,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-PLUGIN_VERSION = "0.1.1"
+PLUGIN_VERSION = "0.1.2"
 
 # Path-traversal defense: regex + segment scan in `_validate_name`.
 _NAME_RE = re.compile(r"^[A-Za-z0-9_./\-]{1,200}$")
@@ -48,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", dest="page_size", type=int, default=100)
     parser.add_argument("--source", type=str, default="all")
+    parser.add_argument("--query", type=str, default="")
     args = parser.parse_args(argv)
 
     try:
@@ -62,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
                 page=args.page,
                 page_size=args.page_size,
                 source=args.source,
+                query=args.query,
             ))
 
         if args.mode == "inspect":

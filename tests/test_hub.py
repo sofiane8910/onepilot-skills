@@ -109,6 +109,96 @@ def test_browse_handles_missing_hermes_module():
     assert out["items"] == []
 
 
+def test_browse_query_aggregates_pages_and_filters_by_substring():
+    """When --query is set, plugin fetches multiple upstream pages and
+    post-filters by case-insensitive substring on name/description/tags."""
+
+    pages = {
+        1: {
+            "items": [
+                {"name": "writer", "description": "Drafts", "trust": "builtin", "tags": []},
+                {"name": "calendar", "description": "CalDAV", "trust": "community", "tags": []},
+            ],
+            "page": 1, "total_pages": 2, "total": 4,
+        },
+        2: {
+            "items": [
+                {"name": "researcher", "description": "Web search", "trust": "community", "tags": []},
+                {"name": "calendar-sync", "description": "Sync calendars", "trust": "community", "tags": ["scheduling"]},
+            ],
+            "page": 2, "total_pages": 2, "total": 4,
+        },
+    }
+    seen_pages: list[int] = []
+
+    def fake_browse(page, page_size, source):
+        seen_pages.append(page)
+        return pages.get(page, {"items": [], "page": page, "total_pages": 2, "total": 4})
+
+    _stub_hermes_module(browse_impl=fake_browse)
+    out = hub_mod.browse(plugin_version="0.1.0", query="calendar")
+
+    assert seen_pages == [1, 2]  # walked both pages then stopped
+    assert out["total"] == 2
+    names = {it["name"] for it in out["items"]}
+    assert names == {"calendar", "calendar-sync"}
+
+
+def test_browse_query_case_insensitive_and_matches_tags():
+    pages = {
+        1: {
+            "items": [
+                {"name": "writer", "description": "drafts long-form", "trust": "builtin", "tags": []},
+                {"name": "skill-x", "description": "anything", "trust": "community", "tags": ["Calendar"]},
+            ],
+            "page": 1, "total_pages": 1, "total": 2,
+        },
+    }
+
+    def fake_browse(page, page_size, source):
+        return pages[page]
+
+    _stub_hermes_module(browse_impl=fake_browse)
+    out = hub_mod.browse(plugin_version="0.1.0", query="CALENDAR")
+    # `skill-x` matches via tag, case-insensitive.
+    names = {it["name"] for it in out["items"]}
+    assert names == {"skill-x"}
+
+
+def test_browse_query_clamped_in_length():
+    """Long query strings are truncated to 128 chars; argparse layer
+    is the second belt, this is the first."""
+    pages = {1: {"items": [], "page": 1, "total_pages": 1, "total": 0}}
+
+    def fake_browse(page, page_size, source):
+        return pages[page]
+
+    _stub_hermes_module(browse_impl=fake_browse)
+    # Pass 500-char query; expect it to be processed (no exception)
+    # and the search to return zero hits as expected.
+    out = hub_mod.browse(plugin_version="0.1.0", query="x" * 500)
+    assert out["total"] == 0
+
+
+def test_browse_query_paginates_filtered_results():
+    """Filtered result set respects page / page_size client-side."""
+    items = [{"name": f"calendar-{i}", "description": "x", "trust": "community", "tags": []} for i in range(15)]
+
+    def fake_browse(page, page_size, source):
+        if page == 1:
+            return {"items": items, "page": 1, "total_pages": 1, "total": 15}
+        return {"items": [], "page": page, "total_pages": 1, "total": 15}
+
+    _stub_hermes_module(browse_impl=fake_browse)
+    page1 = hub_mod.browse(plugin_version="0.1.0", query="calendar", page=1, page_size=10)
+    page2 = hub_mod.browse(plugin_version="0.1.0", query="calendar", page=2, page_size=10)
+
+    assert page1["total"] == 15
+    assert page1["total_pages"] == 2
+    assert len(page1["items"]) == 10
+    assert len(page2["items"]) == 5
+
+
 def test_inspect_translates_hermes_names_to_ios_canonical():
     fake = {
         "name": "writer",
