@@ -13,10 +13,23 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-PLUGIN_VERSION = "0.1.2"
+PLUGIN_VERSION = "0.1.3"
 
 # Path-traversal defense: regex + segment scan in `_validate_name`.
-_NAME_RE = re.compile(r"^[A-Za-z0-9_./\-]{1,200}$")
+# We allow `\w` (Unicode-aware: letters/digits/underscore) plus common
+# punctuation that legitimate skill names contain. The structural check
+# below (no empty parts, no `..`, no `.`) is the actual path-traversal
+# guard — the regex's job is just to keep input bounded and reject
+# control characters / shell-injection vectors we don't need.
+#
+# What's allowed: word chars, spaces, dot, slash, hyphen, parens, plus,
+# ampersand, comma, apostrophe, exclamation, colon, hash. These cover
+# real-world Hermes skill names like "MD5 Tool", "GitHub PR Reviewer",
+# "C++ Style Linter", "Skill (beta)".
+#
+# What's rejected: shell metas not in the whitelist (`;`, `|`, `>`,
+# `<`, backticks, `$`, `\`, quotes other than apostrophe, newlines).
+_NAME_RE = re.compile(r"^[\w \-./()+&,'!:#]{1,200}$", re.UNICODE)
 
 
 def _emit(envelope: dict) -> int:
